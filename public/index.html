@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>问卷管理</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="top-inner"><strong>问卷管理</strong><nav id="nav" hidden><button type="button" data-view="mine">我的问卷</button><button type="button" data-view="fill">填写问卷</button><button type="button" id="logout">退出</button></nav><span id="user"></span></div>
+  </header>
+  <main>
+    <div id="message" role="status" aria-live="polite" hidden></div>
+    <section id="auth-view" class="view">
+      <h1>登录</h1>
+      <form id="auth-form" class="stack compact">
+        <label>用户名<input name="username" required autocomplete="username"></label>
+        <label>密码<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
+        <div class="actions"><button type="submit" id="auth-submit">登录</button><button type="button" class="secondary" id="auth-toggle">创建账户</button></div>
+      </form>
+    </section>
+    <section id="mine-view" class="view" hidden>
+      <div class="section-head"><h1>我的问卷</h1><button type="button" id="new-survey">新建问卷</button></div>
+      <div id="survey-list" class="list"></div>
+    </section>
+    <section id="editor-view" class="view" hidden>
+      <div class="section-head"><div><button type="button" class="link back" data-view="mine">← 我的问卷</button><h1 id="editor-title"></h1></div><span id="editor-status" class="status"></span></div>
+      <div id="editor-meta" class="meta"></div>
+      <div class="section-head small"><h2>题目</h2><div class="actions"><button type="button" id="edit-published" hidden>编辑问卷</button><button type="button" id="add-question">添加题目</button></div></div>
+      <div id="question-list" class="list"></div>
+      <div class="actions footer-actions"><button type="button" id="publish">发布问卷</button><button type="button" class="secondary" id="copy-link">复制填写链接</button><button type="button" class="secondary" id="open-fill">填写</button><button type="button" class="secondary" id="open-stats">统计</button><button type="button" class="secondary" id="close-survey" hidden>关闭问卷</button></div>
+    </section>
+    <section id="fill-view" class="view" hidden>
+      <div class="section-head"><h1>填写问卷</h1><button type="button" class="link" data-view="mine">返回</button></div>
+      <form id="open-form" class="inline-form"><label>问卷链接或公开 ID<input name="publicId" required placeholder="粘贴问卷链接或公开 ID"></label><button type="submit">打开</button></form>
+      <div id="fill-area" hidden><div class="meta"><h2 id="fill-title"></h2><p id="fill-description"></p><span id="fill-progress"></span></div><form id="answer-form" class="stack"><div id="current-question"></div><div class="actions"><button type="button" class="secondary" id="fill-back">上一题</button><button type="submit" id="fill-next">下一题</button></div></form><div id="submission-settings" hidden><label class="check"><input type="checkbox" id="anonymous">向创建者匿名</label><div class="actions"><button type="button" class="secondary" id="review-back">上一题</button><button type="button" id="submit-response">提交答卷</button></div></div></div>
+    </section>
+    <section id="stats-view" class="view" hidden>
+      <div class="section-head"><div><button type="button" class="link" id="stats-back">← 问卷</button><h1>统计</h1><button type="button" class="link" id="stats-all" hidden>返回整卷统计</button></div><div class="actions"><label>版本<select id="stats-version"></select></label><span id="stats-count" class="status"></span></div></div>
+      <div id="stats-list" class="list"></div>
+    </section>
+  </main>
+  <dialog id="dialog"><form id="dialog-form" class="stack"><h2 id="dialog-title"></h2><div id="dialog-fields" class="stack"></div><div class="actions"><button type="button" class="secondary" id="dialog-cancel">取消</button><button type="submit">保存</button></div></form></dialog>
+</body>
+</html>
