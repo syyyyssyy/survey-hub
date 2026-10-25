@@ -1,12 +1,15 @@
 'use strict';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { user: null, surveys: [], survey: null, publicSurvey: null, currentQid: null, history: [], answers: new Map(), submissionId: null, authMode: 'login', dialogAction: null };
+const state = { user: null, surveys: [], survey: null, publicSurvey: null, currentQid: null, history: [], answers: new Map(), submissionId: null, authMode: 'login', dialogAction: null, banks: [], library: [], libraryMode: 'manage', libraryManaging: false };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 async function api(url, options = {}) {
   const response = await fetch(url, { credentials: 'same-origin', ...options,
     headers: options.body ? { 'Content-Type': 'application/json' } : undefined });
+  if (!(response.headers.get('content-type') || '').includes('application/json')) {
+    throw new Error(`当前服务未加载此接口（${url}，HTTP ${response.status}）。请从最新启动的网页地址打开项目并重新生成分享链接。`);
+  }
   const result = await response.json();
   if (result.code !== 0) {
     const detail = result.data?.issues?.map((issue) => issue.message).join('；');
@@ -54,6 +57,7 @@ async function openSurvey(id) {
   $('#editor-meta').innerHTML = `<div>${escapeHtml(survey.description || '无描述')}</div><div>公开 ID：${escapeHtml(survey.publicId)} · ${escapeHtml(formatDate(survey.deadline))}</div>`;
   $('#edit-published').hidden = survey.status !== 'published' || editable;
   $('#add-question').hidden = !editable;
+  $('#choose-library').hidden = !editable;
   $('#publish').hidden = !editable;
   $('#copy-link').hidden = survey.status !== 'published';
   $('#open-fill').hidden = survey.status !== 'published';
@@ -61,14 +65,16 @@ async function openSurvey(id) {
   $('#close-survey').hidden = survey.status !== 'published';
   $('#question-list').innerHTML = survey.draftQuestions.length ? survey.draftQuestions.map((question, index) => `
     <div class="row"><div class="row-main"><div class="row-title">${index + 1}. ${escapeHtml(question.title)}</div>
-    <div class="row-sub">${escapeHtml(question.qid)} · ${escapeHtml({ single: '单选', multi: '多选', text: '文本', number: '数字', rating: '评分' }[question.type])} · ${question.required ? '必答' : '选答'}${question.jumpRules?.length ? ` · ${question.jumpRules.length} 条跳转` : ''}</div></div>
-    ${editable ? `<div class="row-actions"><button type="button" class="secondary" data-move="up" data-qid="${escapeHtml(question.qid)}" title="上移" aria-label="上移第 ${index + 1} 题" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" class="secondary" data-move="down" data-qid="${escapeHtml(question.qid)}" title="下移" aria-label="下移第 ${index + 1} 题" ${index === survey.draftQuestions.length - 1 ? 'disabled' : ''}>↓</button><button type="button" class="secondary" data-edit="${escapeHtml(question.qid)}">编辑</button><button type="button" class="secondary" data-delete="${escapeHtml(question.qid)}">删除</button></div>` : ''}</div>`).join('') : '<p>暂无题目</p>';
+    <div class="row-sub">${escapeHtml(question.qid)} · ${escapeHtml({ single: '单选', multi: '多选', text: '文本', number: '数字', rating: '评分' }[question.type])} · ${question.required ? '必答' : '选答'}${question.jumpRules?.length ? ` · ${question.jumpRules.length} 条跳转` : ''}</div>
+    ${question.options?.length ? `<div class="question-options">${question.options.map((option) => `<span>${escapeHtml(option.id)}. ${escapeHtml(option.text)}</span>`).join('')}</div>` : ''}</div>
+    ${editable ? `<div class="row-actions"><button type="button" class="secondary" data-move="up" data-qid="${escapeHtml(question.qid)}" title="上移" aria-label="上移第 ${index + 1} 题" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" class="secondary" data-move="down" data-qid="${escapeHtml(question.qid)}" title="下移" aria-label="下移第 ${index + 1} 题" ${index === survey.draftQuestions.length - 1 ? 'disabled' : ''}>↓</button><button type="button" class="secondary" data-edit="${escapeHtml(question.qid)}">编辑</button><button type="button" class="secondary" data-save-library="${escapeHtml(question.qid)}">存入题库</button><button type="button" class="secondary" data-delete="${escapeHtml(question.qid)}">删除</button></div>` : ''}</div>`).join('') : '<p>暂无题目</p>';
   show('editor');
 }
 
 function openDialog(title, fields, action) {
   $('#dialog-title').textContent = title;
   $('#dialog-fields').innerHTML = fields;
+  $('#dialog-form button[type="submit"]').textContent = '保存';
   state.dialogAction = action;
   $('#dialog').showModal();
 }
@@ -105,8 +111,8 @@ const optionLetter = (index) => {
   for (let value = index + 1; value > 0; value = Math.floor((value - 1) / 26)) result = String.fromCharCode(65 + (value - 1) % 26) + result;
   return result;
 };
-function questionDialog(question = null) {
-  const currentQid = question?.qid || String(state.survey.draftQuestions.length + 1);
+function questionDialog(question = null, onSave = null) {
+  const currentQid = question?.qid || String((state.survey?.draftQuestions.length || 0) + 1);
   let type = question?.type || 'single';
   let options = (question?.options || []).map((item) => item.text);
   if (!question) options = ['', ''];
@@ -131,10 +137,12 @@ function questionDialog(question = null) {
     <div class="grid-two" id="text-config">${limit('minLength', '最短文本')}${limit('maxLength', '最长文本')}</div>
     <div id="number-config" class="stack"><div class="grid-two">${limit('min', '最小数字', 'any')}${limit('max', '最大数字', 'any')}</div><label class="check"><input name="integer" type="checkbox" ${question?.validation?.integer ? 'checked' : ''}>仅整数</label></div>
     <div id="rating-config" class="grid-two"><label>最低分<input name="ratingMin" type="number" min="1" max="10" step="1" value="${type === 'rating' ? question.validation.min : 1}"></label><label>最高分<input name="ratingMax" type="number" min="1" max="10" step="1" value="${type === 'rating' ? question.validation.max : 5}"></label></div></section>
-    <section class="question-section" id="rules-config"><h3>跳转规则</h3><div id="rule-rows" class="editor-rows"></div><button type="button" class="secondary" data-action="add-rule">+ 添加跳转规则</button></section>`, async (form) => {
+    <section class="question-section" id="rules-config"><h3>跳转规则</h3><div id="rule-rows" class="editor-rows"></div><button type="button" class="secondary" data-action="add-rule">+ 添加跳转规则</button></section>
+    ${onSave ? '<label>保存方式<select name="saveMode"><option value="new">创建新版本</option><option value="overwrite">覆盖选中版本</option></select></label><p class="hint">覆盖会更新本人问卷中使用该版本的题目；已发布问卷会生成新快照，历史答卷保留。其他用户导入的副本不受影响。</p>' : ''}`, async (form) => {
     const title = form.elements.title.value.trim();
     if (!title) throw new Error('请输入题目内容');
-    const data = { qid: question ? currentQid : '__new_question__', type, title, required: form.elements.required.checked, options: [], validation: {}, jumpRules: [] };
+    const data = { qid: question ? currentQid : '__new_question__', type, title, required: form.elements.required.checked, options: [], validation: {}, jumpRules: [],
+      ...(question?.libraryQuestionId && { libraryQuestionId: question.libraryQuestionId, questionVersionId: question.questionVersionId }) };
     if (type === 'single' || type === 'multi') {
       if (!options.length || options.some((item) => !item.trim())) throw new Error('请填写所有选项文字');
       data.options = options.map((item, index) => ({ id: optionLetter(index), text: item.trim() }));
@@ -178,6 +186,12 @@ function questionDialog(question = null) {
       }
       return { id: `r${index + 1}`, when, targetQid: rule.target };
     });
+    if (onSave) {
+      const { type, title, required, options, validation } = data;
+      await onSave({ type, title, required, ...(options.length && { options }),
+        ...(Object.keys(validation).length && { validation }) }, form.elements.saveMode.value);
+      return;
+    }
     const questions = [...state.survey.draftQuestions];
     if (question) questions[questions.findIndex((item) => item.qid === question.qid)] = data;
     else questions.push(data);
@@ -185,9 +199,10 @@ function questionDialog(question = null) {
   });
   const fields = $('#dialog-fields');
   const renderRules = () => {
-    const targets = state.survey.draftQuestions.filter((item) => !question || item.qid !== currentQid);
-    const currentIndex = question ? state.survey.draftQuestions.findIndex((item) => item.qid === currentQid) : -1;
-    const next = currentIndex < 0 ? null : state.survey.draftQuestions[currentIndex + 1];
+    const surveyQuestions = state.survey?.draftQuestions || [];
+    const targets = surveyQuestions.filter((item) => !question || item.qid !== currentQid);
+    const currentIndex = question ? surveyQuestions.findIndex((item) => item.qid === currentQid) : -1;
+    const next = currentIndex < 0 ? null : surveyQuestions[currentIndex + 1];
     fields.querySelector('#rule-rows').innerHTML = rules.map((rule, index) => `<div class="rule-row" data-rule="${index}">
       ${type === 'multi' ? `<select data-field="mode" aria-label="第 ${index + 1} 条规则的匹配方式">${[['single', '包含单个选项'], ['any', '包含任一选项'], ['all', '同时包含全部'], ['exact', '恰好选择这些'], ['exclude', '未选择任何指定选项']].map(([value, label]) => `<option value="${value}" ${rule.mode === value ? 'selected' : ''}>${label}</option>`).join('')}</select>` : ''}
       ${type === 'number' || type === 'rating' ? `<select data-field="condition" aria-label="第 ${index + 1} 条规则的条件">${[['gt', '大于'], ['gte', '大于等于'], ['lt', '小于'], ['lte', '小于等于'], ['eq', '等于'], ['between', '介于（含边界）']].map(([value, label]) => `<option value="${value}" ${rule.op === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
@@ -208,7 +223,7 @@ function questionDialog(question = null) {
     fields.querySelector('#number-config').hidden = type !== 'number';
     fields.querySelector('#rating-config').hidden = type !== 'rating';
     fields.querySelectorAll('#rating-config input').forEach((input) => { input.disabled = type !== 'rating'; });
-    fields.querySelector('#rules-config').hidden = type === 'text';
+    fields.querySelector('#rules-config').hidden = !!onSave || type === 'text';
     renderOptions();
   };
   fields.oninput = (event) => {
@@ -245,6 +260,63 @@ function questionDialog(question = null) {
     if (button.dataset.action === 'remove-rule') { rules.splice(Number(button.dataset.index), 1); renderRules(); }
   };
   renderType();
+}
+
+function renderLibrary() {
+  const selecting = state.libraryManaging || state.libraryMode === 'insert';
+  const groups = [{ id: 'default', name: '默认题库' },
+    ...state.banks.map((bank) => ({ id: bank._id, name: bank.name }))];
+  $('#library-back').hidden = state.libraryMode !== 'insert';
+  $('#manage-library').hidden = state.libraryMode === 'insert';
+  $('#manage-library').textContent = state.libraryManaging ? '完成管理' : '管理题目';
+  $('#library-toolbar').hidden = !state.libraryManaging;
+  $('#library-add-toolbar').hidden = state.libraryMode !== 'insert';
+  $('#library-target-bank').innerHTML = groups.map((group) =>
+    `<option value="${group.id}">${escapeHtml(group.name)}</option>`).join('');
+  $('#library-list').innerHTML = groups.map((group) => {
+    const items = state.library.filter((item) => (item.bankId || 'default') === group.id);
+    return `<section class="bank-group" data-bank="${group.id}"><div class="section-head small"><h2>${escapeHtml(group.name)} <small>(${items.length})</small></h2><div class="actions">
+      ${selecting && items.length ? '<label class="check"><input type="checkbox" data-select-all>全选本题库</label>' : ''}
+      ${group.id !== 'default' && state.libraryMode !== 'insert' ? `<button type="button" class="secondary" data-rename-bank="${group.id}">重命名</button><button type="button" class="secondary" data-delete-bank="${group.id}">删除空题库</button>` : ''}</div></div>
+      ${items.length ? items.map((item) => `<div class="row" data-library-id="${item._id}">
+        ${selecting ? `<input type="checkbox" class="row-check" data-select-question value="${item._id}" aria-label="选择${escapeHtml(item.currentVersion.content.title)}">` : ''}
+        <div class="row-main"><div class="row-title">${escapeHtml(item.currentVersion.content.title)}</div>
+        <div class="row-sub">${escapeHtml(item.currentVersion.content.type)} · 默认 v${item.currentVersion.version}</div>
+        <label>题目版本<select data-version>${item.versions.map((version) => `<option value="${version._id}" ${version._id === item.currentVersionId ? 'selected' : ''}>v${version.version} · ${escapeHtml(version.content.title)}</option>`).join('')}</select></label></div>
+        <div class="row-actions">${state.libraryMode !== 'insert' ? '<button type="button" class="secondary" data-library-action="edit">编辑</button><button type="button" class="secondary" data-library-action="restore">设为默认版本</button><button type="button" class="secondary" data-library-action="share">分享链接</button><button type="button" class="secondary" data-library-action="usage">使用情况</button><button type="button" class="secondary" data-library-action="stats">跨问卷统计</button>' : ''}</div></div>`).join('') : '<p class="muted">暂无题目</p>'}</section>`;
+  }).join('');
+}
+async function openLibrary(mode = 'manage') {
+  state.libraryMode = mode;
+  state.libraryManaging = false;
+  [state.banks, state.library] = await Promise.all([
+    api('/api/question-banks'), api('/api/library-questions')
+  ]);
+  const histories = await Promise.all(state.library.map((item) =>
+    api(`/api/library-questions/${item._id}/versions`)));
+  state.library.forEach((item, index) => { item.versions = histories[index]; });
+  renderLibrary();
+  $('#library-detail').hidden = true;
+  show('library');
+}
+function bankDialog(name = '', bankId = null) {
+  openDialog(bankId ? '重命名题库' : '新建题库', `<label>题库名称<input name="name" required maxlength="120" value="${escapeHtml(name)}"></label>`, async (form) => {
+    const body = { name: form.elements.name.value.trim() };
+    if (bankId) await send(`/api/question-banks/${bankId}`, 'PATCH', body);
+    else await send('/api/question-banks', 'POST', body);
+    await openLibrary(state.libraryMode);
+  });
+}
+async function saveToLibrary(qid) {
+  state.banks = await api('/api/question-banks');
+  openDialog('存入题库', `<label>题库<select name="bankId"><option value="default">默认题库</option>${state.banks.map((bank) =>
+    `<option value="${bank._id}">${escapeHtml(bank.name)}</option>`).join('')}</select></label>`, async (form) => {
+    const bankId = form.elements.bankId.value;
+    await send(bankId === 'default' ? '/api/library-questions' : `/api/question-banks/${bankId}/questions`, 'POST',
+      { surveyId: state.survey._id, qid });
+    await openSurvey(state.survey._id);
+    notice('题目已保存到题库', true);
+  });
 }
 
 function normalizePublicId(value) {
@@ -340,7 +412,7 @@ function renderStatistics(data) {
   $('#stats-all').hidden = !data.question;
   $('#stats-list').innerHTML = (data.question ? [data.question] : data.questions).map((question) => {
     let body;
-    if (question.counts) body = question.counts.map((item) => `<div class="stats-line"><span>${escapeHtml(item.optionId)}</span><strong>${item.count}</strong></div>`).join('');
+    if (question.counts) body = question.counts.map((item) => `<div class="stats-line"><span>${escapeHtml(item.optionId)}. ${escapeHtml(item.text)}</span><strong>${item.count}</strong></div>`).join('');
     else if (question.values) body = question.values.length ? question.values.map((value) => `<div class="stats-text">${escapeHtml(value)}</div>`).join('') : '<p>暂无文本答案</p>';
     else body = '';
     if (question.type === 'number' || question.type === 'rating') body = `<div class="stats-line"><span>平均值</span><strong>${question.avg ?? '—'}</strong></div><div class="stats-line"><span>最小值</span><strong>${question.min ?? '—'}</strong></div><div class="stats-line"><span>最大值</span><strong>${question.max ?? '—'}</strong></div>${body}`;
@@ -360,12 +432,118 @@ $('#auth-form').addEventListener('submit', (event) => { event.preventDefault(); 
   const form = event.currentTarget;
   state.user = await send(`/api/auth/${state.authMode}`, 'POST', { username: form.elements.username.value, password: form.elements.password.value });
   await refreshSurveys();
-  const requested = new URLSearchParams(location.search).get('survey');
-  if (requested) await openPublic(requested); else show('mine');
+  const params = new URLSearchParams(location.search);
+  if (params.has('import')) {
+    await openLibrary();
+    $('#import-question').elements.link.value = location.href;
+  } else if (params.has('survey')) await openPublic(params.get('survey'));
+  else show('mine');
 }); });
 $('#auth-toggle').addEventListener('click', () => { state.authMode = state.authMode === 'login' ? 'register' : 'login'; $('#auth-view h1').textContent = state.authMode === 'login' ? '登录' : '注册'; $('#auth-submit').textContent = state.authMode === 'login' ? '登录' : '注册'; $('#auth-toggle').textContent = state.authMode === 'login' ? '创建账户' : '返回登录'; });
 $('#logout').addEventListener('click', () => run(async () => { await send('/api/auth/logout', 'POST'); state.user = null; state.survey = null; show('auth'); }));
-document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => run(async () => { const view = button.dataset.view; if (view === 'mine') await refreshSurveys(); show(view); })));
+document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => run(async () => { const view = button.dataset.view; if (view === 'mine') await refreshSurveys(); if (view === 'library') await openLibrary(); else show(view); })));
+$('#new-bank').addEventListener('click', () => bankDialog());
+$('#manage-library').addEventListener('click', () => {
+  state.libraryManaging = !state.libraryManaging;
+  renderLibrary();
+});
+$('#library-back').addEventListener('click', () => run(() => openSurvey(state.survey._id)));
+$('#choose-library').addEventListener('click', () => run(() => openLibrary('insert')));
+$('#import-question').addEventListener('submit', (event) => { event.preventDefault(); const form = event.currentTarget; run(async () => {
+  const raw = form.elements.link.value.trim();
+  let token = raw;
+  try { token = new URL(raw).searchParams.get('import') || raw; } catch { /* Accept a raw token. */ }
+  await send('/api/library-questions/import', 'POST', { token });
+  form.reset();
+  await openLibrary();
+  notice('题目已导入默认题库；以后可独立修改', true);
+}); });
+$('#library-list').addEventListener('click', (event) => run(async () => {
+  const button = event.target.closest('button');
+  if (!button || (!button.dataset.renameBank && !button.dataset.deleteBank)) return;
+  const bank = state.banks.find((item) => item._id === button.dataset.renameBank || item._id === button.dataset.deleteBank);
+  if (button.dataset.renameBank) bankDialog(bank.name, bank._id);
+  if (button.dataset.deleteBank && confirm(`删除空题库“${bank.name}”？`)) {
+    await send(`/api/question-banks/${bank._id}`, 'DELETE'); await openLibrary(state.libraryMode);
+  }
+}));
+$('#library-list').addEventListener('change', (event) => {
+  if (!event.target.matches('[data-select-all]')) return;
+  event.target.closest('[data-bank]').querySelectorAll('[data-select-question]').forEach((input) => {
+    input.checked = event.target.checked;
+  });
+});
+const selectedLibraryRows = () => [...$('#library-list').querySelectorAll('[data-library-id]')]
+  .filter((row) => row.querySelector('[data-select-question]')?.checked);
+$('#move-library').addEventListener('click', () => run(async () => {
+  const ids = selectedLibraryRows().map((row) => row.dataset.libraryId);
+  if (!ids.length) throw new Error('请先选择题目');
+  const target = $('#library-target-bank').value;
+  await send('/api/library-questions/batch', 'POST', { ids, action: 'move',
+    bankId: target === 'default' ? null : target });
+  await openLibrary();
+  notice(`已移动 ${ids.length} 道题`, true);
+}));
+$('#delete-library').addEventListener('click', () => run(async () => {
+  const ids = selectedLibraryRows().map((row) => row.dataset.libraryId);
+  if (!ids.length) throw new Error('请先选择题目');
+  if (!confirm(`从题库删除 ${ids.length} 道题？已保存的问卷和答卷不会删除。`)) return;
+  await send('/api/library-questions/batch', 'POST', { ids, action: 'archive' });
+  await openLibrary();
+  notice(`已从题库移除 ${ids.length} 道题`, true);
+}));
+$('#add-library-selected').addEventListener('click', () => run(async () => {
+  const questionVersionIds = selectedLibraryRows().map((row) => row.querySelector('[data-version]').value);
+  if (!questionVersionIds.length) throw new Error('请先选择题目');
+  await send(`/api/surveys/${state.survey._id}/questions/from-library/batch`, 'POST', { questionVersionIds });
+  await openSurvey(state.survey._id);
+  notice(`已添加 ${questionVersionIds.length} 道题`, true);
+}));
+$('#library-list').addEventListener('click', (event) => run(async () => {
+  const button = event.target.closest('[data-library-action]');
+  if (!button) return;
+  const row = button.closest('[data-library-id]');
+  const item = state.library.find((entry) => entry._id === row.dataset.libraryId);
+  const selectedId = row.querySelector('[data-version]').value;
+  const version = item.versions.find((entry) => entry._id === selectedId);
+  const base = `/api/library-questions/${item._id}`;
+  if (button.dataset.libraryAction === 'edit') {
+    questionDialog({ qid: '1', ...version.content }, async (content, mode) => {
+      if (mode === 'overwrite') {
+        if (!confirm('覆盖后，本人问卷中使用此版本的题目会更新；已发布问卷将生成新快照。确定覆盖？')) return;
+        await send(`${base}/versions/${selectedId}`, 'PUT', { question: content });
+      } else {
+        await send(`${base}/versions`, 'POST', { question: content, sourceVersionId: selectedId });
+      }
+      await openLibrary(state.libraryMode);
+    });
+  } else if (button.dataset.libraryAction === 'restore') {
+    if (!confirm(`将 v${version.version} 设为默认版本？不会新增版本。`)) return;
+    await send(`${base}/versions/${selectedId}/restore`, 'POST');
+    await openLibrary(state.libraryMode);
+  } else if (button.dataset.libraryAction === 'share') {
+    const { token } = await send(`${base}/share-link`, 'POST');
+    const link = new URL('/', location.origin);
+    link.searchParams.set('import', token);
+    openDialog('题目分享链接', `<label>复制链接发给其他用户<input name="link" readonly value="${escapeHtml(link.toString())}"></label><p class="hint">可供多人分别导入为独立副本。重新生成链接会使旧链接失效，已导入的副本不受影响。</p>`, async () => {
+      await navigator.clipboard.writeText(link.toString());
+      notice('分享链接已复制', true);
+    });
+    $('#dialog-form button[type="submit"]').textContent = '复制链接';
+  } else {
+    const data = await api(`${base}/${button.dataset.libraryAction === 'usage' ? 'usage' : 'statistics'}`);
+    const detail = $('#library-detail');
+    detail.hidden = false;
+    detail.innerHTML = button.dataset.libraryAction === 'usage'
+      ? `<h2>使用情况</h2>${[...data.drafts.map((x) => `草稿：${x.title} / 第${x.qid}题 / 题目版本 ${x.questionVersionId}`),
+        ...data.published.map((x) => `已发布：${x.title} v${x.surveyVersion} / 第${x.qid}题 / 题目版本 ${x.questionVersionId}`)]
+        .map((x) => `<p>${escapeHtml(x)}</p>`).join('') || '<p>尚未使用</p>'}`
+      : `<h2>跨问卷统计</h2>${data.versions.flatMap((x) =>
+        (x.revisions || [x]).map((part) => `<p>v${x.version}${x.revisions ? `（内容修订 ${part.contentRevision}）` : ''} ${escapeHtml(part.title)}：纳入 ${part.surveyVersionCount} 个问卷版本，${part.answerCount} 人回答；${part.counts.length
+          ? part.counts.map((c) => `${escapeHtml(c.text)} ${c.count} 次`).join('，')
+          : part.type === 'text' ? escapeHtml(part.values.join('；')) : `平均值 ${part.avg ?? '—'}`}</p>`)).join('')}`;
+  }
+}));
 $('#new-survey').addEventListener('click', surveyDialog);
 $('#survey-list').addEventListener('click', (event) => run(async () => {
   const button = event.target.closest('button'); if (!button) return;
@@ -380,9 +558,10 @@ $('#edit-published').addEventListener('click', () => run(async () => {
 }));
 $('#question-list').addEventListener('click', (event) => run(async () => {
   const button = event.target.closest('button'); if (!button) return;
-  const qid = button.dataset.edit || button.dataset.delete || button.dataset.qid;
+  const qid = button.dataset.edit || button.dataset.delete || button.dataset.saveLibrary || button.dataset.qid;
   if (!qid) return;
   if (button.dataset.edit) questionDialog(state.survey.draftQuestions.find((item) => item.qid === qid));
+  else if (button.dataset.saveLibrary) await saveToLibrary(qid);
   else if (button.dataset.delete && confirm(`删除题目 ${qid}？指向该题的跳转规则也会删除。`)) {
     await saveQuestions(state.survey.draftQuestions.filter((item) => item.qid !== qid));
   } else if (button.dataset.move) {
@@ -427,8 +606,12 @@ $('#dialog-form').addEventListener('submit', (event) => { event.preventDefault()
 run(async () => {
   try {
     state.user = await api('/api/auth/me'); await refreshSurveys();
-    const requested = new URLSearchParams(location.search).get('survey');
-    if (requested) await openPublic(requested); else show('mine');
+    const params = new URLSearchParams(location.search);
+    if (params.has('import')) {
+      await openLibrary();
+      $('#import-question').elements.link.value = location.href;
+    } else if (params.has('survey')) await openPublic(params.get('survey'));
+    else show('mine');
   }
   catch (error) { if (error.code !== 'LOGIN_REQUIRED') throw error; show('auth'); }
 });

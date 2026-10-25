@@ -26,4 +26,6 @@ dialog{width:min(700px,calc(100vw - 30px));max-height:calc(100vh - 30px);overflo
 .rating-choice input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
 .rating-choice span{display:grid;place-items:center;width:44px;height:44px;border:1px solid #b9c8c5;border-radius:4px;background:#fff;color:#202a2c}
 .rating-choice input:checked+span{background:#176d67;border-color:#176d67;color:#fff}
+.bank-group{margin-top:20px}.bank-group .section-head{margin-bottom:4px}.bank-group small{font-size:13px;color:#607371;font-weight:400}.row-check{width:18px;min-height:18px;flex:0 0 18px;margin:0}.bank-group .row-main{flex:1}.bank-group .row-main label{font-size:12px;margin-top:8px;max-width:320px}#import-question{margin-bottom:15px}#library-toolbar,#library-add-toolbar{margin:12px 0}
+.question-options{display:flex;flex-wrap:wrap;gap:7px 16px;margin-top:9px;font-size:14px;color:#425755}.question-options span{overflow-wrap:anywhere}.bank-group .section-head .actions{justify-content:flex-end}
 .rating-choice input:focus-visible+span{outline:2px solid #173f7a;outline-offset:2px}

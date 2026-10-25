@@ -31,6 +31,9 @@ const jumpRule = z.strictObject({
 });
 const question = z.strictObject({
   qid: nonempty,
+  libraryQuestionId: z.string().regex(/^[0-9a-f]{24}$/).optional(),
+  questionVersionId: z.string().regex(/^[0-9a-f]{24}$/).optional(),
+  contentRevision: z.number().int().positive().optional(),
   type: z.enum(['single', 'multi', 'text', 'number', 'rating']),
   title: nonempty,
   required: z.boolean(),
@@ -38,6 +41,9 @@ const question = z.strictObject({
   validation: validation.optional(),
   jumpRules: z.array(jumpRule).optional()
 }).superRefine((value, context) => {
+  if (!!value.libraryQuestionId !== !!value.questionVersionId) {
+    context.addIssue({ code: 'custom', message: 'Library question and version ids must occur together' });
+  }
   const ids = (value.options || []).map((item) => item.id);
   if (ids.length !== new Set(ids).size) context.addIssue({ code: 'custom', message: 'Duplicate option id' });
   const ruleIds = (value.jumpRules || []).map((item) => item.id);
@@ -107,4 +113,16 @@ const nextStep = z.strictObject({
   answers: submission.shape.answers
 });
 
-module.exports = { credentials, survey, question, submission, nextStep };
+const libraryContent = z.strictObject({
+  type: z.enum(['single', 'multi', 'text', 'number', 'rating']),
+  title: nonempty,
+  required: z.boolean(),
+  options: z.array(option).optional(),
+  validation: validation.optional()
+}).superRefine((value, context) => {
+  if (!question.safeParse({ qid: 'library', ...value, jumpRules: [] }).success) {
+    context.addIssue({ code: 'custom', message: 'Invalid library question content' });
+  }
+});
+
+module.exports = { credentials, survey, question, libraryContent, submission, nextStep };

@@ -402,7 +402,7 @@ test('different users can submit the same survey concurrently', async () => {
   assert.ok(stored.every((item) => item.versionId.toString() === versionId));
   const statistics = (await owner.get(`${base}/statistics`)).body.data;
   assert.equal(statistics.totalResponses, 3);
-  assert.deepEqual(statistics.questions[0].counts, [{ optionId: 'A', count: 3 }]);
+  assert.deepEqual(statistics.questions[0].counts, [{ optionId: 'A', text: 'Yes', count: 3 }]);
 });
 
 test('registration through published survey, guided response, and statistics works end to end', async () => {

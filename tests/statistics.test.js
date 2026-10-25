@@ -77,10 +77,10 @@ test('whole and single-question statistics use fixed response data', async () =>
   assert.equal(whole.body.data.totalResponses, 3);
   assert.deepEqual(whole.body.data.questions, [
     { qid: 'choice', type: 'single', title: 'Choice', count: 3, counts: [
-      { optionId: 'A', count: 2 }, { optionId: 'B', count: 1 }, { optionId: 'C', count: 0 }
+      { optionId: 'A', text: 'A', count: 2 }, { optionId: 'B', text: 'B', count: 1 }, { optionId: 'C', text: 'C', count: 0 }
     ] },
     { qid: 'tags', type: 'multi', title: 'Tags', counts: [
-      { optionId: 'X', count: 1 }, { optionId: 'Y', count: 2 }
+      { optionId: 'X', text: 'X', count: 1 }, { optionId: 'Y', text: 'Y', count: 2 }
     ] },
     { qid: 'comment', type: 'text', title: 'Comment', count: 2, values: ['alpha', 'beta'] },
     { qid: 'score', type: 'number', title: 'Score', count: 2, avg: 15, min: 10, max: 20, values: [10, 20] }
@@ -139,7 +139,7 @@ test('an older version stays unchanged after new-version responses arrive', asyn
   assert.equal(current.totalResponses, 2);
   assert.deepEqual(current.questions, [
     { qid: 'choice', type: 'single', title: 'New choice', count: 2, counts: [
-      { optionId: 'D', count: 1 }, { optionId: 'E', count: 1 }
+      { optionId: 'D', text: 'D', count: 1 }, { optionId: 'E', text: 'E', count: 1 }
     ] },
     { qid: 'score', type: 'number', title: 'New score', count: 2, avg: 150, min: 100, max: 200, values: [100, 200] }
   ]);
@@ -194,5 +194,5 @@ test('single-question answer count excludes skipped optional answers', async () 
   const statistics = (await owner.get(`${base}/statistics/1`)).body.data;
   assert.equal(statistics.totalResponses, 1);
   assert.equal(statistics.question.count, 0);
-  assert.deepEqual(statistics.question.counts, [{ optionId: 'A', count: 0 }]);
+  assert.deepEqual(statistics.question.counts, [{ optionId: 'A', text: 'Yes', count: 0 }]);
 });

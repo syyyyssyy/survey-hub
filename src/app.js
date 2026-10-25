@@ -11,6 +11,8 @@ const { validateSurveyLogic } = require('./survey-logic');
 const { getStatistics } = require('./statistics');
 const { closeExpiredSurveys } = require('./survey-status');
 const { replayPath, validateAnswer, resolveNextQuestion } = require('./rule-engine');
+const { mountLibraryRoutes } = require('./library');
+const { isDeepStrictEqual } = require('node:util');
 
 function apiError(code, status, message) {
   const error = new Error(message);
@@ -89,6 +91,29 @@ function createApp(db, { sessionSecret = process.env.SESSION_SECRET } = {}) {
     ...(record.status === 'published' ? { draftBaseVersionId: record.publishedVersionId,
       publishedVersionId: record.publishedVersionId } : {})
   });
+  const questionContent = ({ type, title, required, options, validation }) => ({
+    type, title, required, ...(options?.length && { options }),
+    ...(validation && Object.keys(validation).length && { validation })
+  });
+  const protectLibraryLinks = async (questions, previousQuestions) => {
+    const known = new Map(previousQuestions.filter((item) => item.questionVersionId)
+      .map((item) => [item.questionVersionId, item.libraryQuestionId]));
+    for (const item of questions) {
+      if (!item.questionVersionId) continue;
+      if (known.get(item.questionVersionId) !== item.libraryQuestionId) {
+        throw apiError('VALIDATION_ERROR', 400, 'Library source cannot be assigned manually');
+      }
+      const version = await db.collection('question_versions').findOne({
+        _id: objectId(item.questionVersionId), questionId: objectId(item.libraryQuestionId)
+      });
+      if (!version || !isDeepStrictEqual(questionContent(item), questionContent(version.content))) {
+        delete item.libraryQuestionId;
+        delete item.questionVersionId;
+        delete item.contentRevision;
+      }
+    }
+    return questions;
+  };
 
   app.post('/api/auth/register', async (request, response) => {
     const input = credentials.parse(request.body);
@@ -181,6 +206,7 @@ function createApp(db, { sessionSecret = process.env.SESSION_SECRET } = {}) {
   app.post('/api/surveys/:id/questions', requireLogin, async (request, response) => {
     const record = await editableSurvey(request);
     const question = questionSchema.parse(request.body);
+    if (question.questionVersionId) throw apiError('VALIDATION_ERROR', 400, 'Use the library selection API');
     const result = await surveys.updateOne(
       { ...editableFilter(record), 'draftQuestions.qid': { $ne: question.qid } },
       { $push: { draftQuestions: question }, $set: { updatedAt: new Date() } }
@@ -191,6 +217,7 @@ function createApp(db, { sessionSecret = process.env.SESSION_SECRET } = {}) {
   app.put('/api/surveys/:id/questions', requireLogin, async (request, response) => {
     const record = await editableSurvey(request);
     const questions = z.array(questionSchema).parse(request.body);
+    await protectLibraryLinks(questions, record.draftQuestions);
     const ids = questions.map((item) => item.qid);
     if (ids.length !== new Set(ids).size) throw apiError('VALIDATION_ERROR', 400, 'Duplicate question id');
     const result = await surveys.updateOne(
@@ -208,6 +235,7 @@ function createApp(db, { sessionSecret = process.env.SESSION_SECRET } = {}) {
       throw apiError('VALIDATION_ERROR', 400, 'Question id cannot change');
     }
     const question = questionSchema.parse({ ...previous, ...request.body });
+    await protectLibraryLinks([question], [previous]);
     const result = await surveys.updateOne(
       { ...editableFilter(record), 'draftQuestions.qid': question.qid },
       { $set: { 'draftQuestions.$': question, updatedAt: new Date() } }
@@ -403,6 +431,8 @@ function createApp(db, { sessionSecret = process.env.SESSION_SECRET } = {}) {
     }
     ok(response, await getStatistics(responses, record._id, version, request.params.qid));
   });
+
+  mountLibraryRoutes(app, db, { requireLogin, objectId, apiError, ok, editableSurvey, editableFilter });
 
   app.use((error, _request, response, _next) => {
     if (error instanceof ZodError) {

@@ -27,6 +27,9 @@ const questionSchema = {
   ],
   properties: {
     qid: { bsonType: "string" },
+    libraryQuestionId: { bsonType: "string", pattern: "^[0-9a-f]{24}$" },
+    questionVersionId: { bsonType: "string", pattern: "^[0-9a-f]{24}$" },
+    contentRevision: { bsonType: ["int", "long"], minimum: 1 },
     type: { enum: ["single", "multi", "text", "number", "rating"] },
     title: { bsonType: "string" },
     required: { bsonType: "bool" },
@@ -137,6 +140,34 @@ const collections = {
       publishedBy: { bsonType: "objectId" }
     }
   },
+  question_banks: {
+    bsonType: "object", required: ["_id", "ownerId", "name", "createdAt", "updatedAt"],
+    properties: { _id: { bsonType: "objectId" }, ownerId: { bsonType: "objectId" },
+      name: { bsonType: "string" }, createdAt: { bsonType: "date" }, updatedAt: { bsonType: "date" } }
+  },
+  library_questions: {
+    bsonType: "object", required: ["_id", "bankId", "ownerId", "sharedWith", "currentVersionId", "createdAt", "updatedAt"],
+    properties: { _id: { bsonType: "objectId" }, bankId: { bsonType: ["objectId", "null"] },
+      ownerId: { bsonType: "objectId" }, sharedWith: { bsonType: "array", items: { bsonType: "objectId" } },
+      currentVersionId: { bsonType: "objectId" }, createdAt: { bsonType: "date" }, updatedAt: { bsonType: "date" },
+      archivedAt: { bsonType: "date" }, shareTokenHash: { bsonType: "string" },
+      originRefs: { bsonType: "array", items: { bsonType: "object", required: ["surveyVersionId", "qid", "questionVersionId"],
+        properties: { surveyVersionId: { bsonType: "objectId" }, qid: { bsonType: "string" },
+          questionVersionId: { bsonType: "objectId" } } } } }
+  },
+  question_versions: {
+    bsonType: "object", required: ["_id", "questionId", "version", "content", "sourceVersionId", "createdAt", "createdBy"],
+    properties: { _id: { bsonType: "objectId" }, questionId: { bsonType: "objectId" },
+      version: integerType, sourceVersionId: { bsonType: ["objectId", "null"] },
+      contentRevision: integerType,
+      contentHistory: { bsonType: "array", items: { bsonType: "object", required: ["revision", "content"],
+        properties: { revision: integerType, content: { bsonType: "object" } } } },
+      content: { bsonType: "object", required: ["type", "title", "required"],
+        properties: { type: { enum: ["single", "multi", "text", "number", "rating"] },
+          title: { bsonType: "string" }, required: { bsonType: "bool" },
+          options: questionSchema.properties.options, validation: questionSchema.properties.validation } },
+      createdAt: { bsonType: "date" }, createdBy: { bsonType: "objectId" } }
+  },
   responses: {
     bsonType: "object",
     required: ["_id", "surveyId", "versionId", "respondentId", "respondentKey", "anonymous", "clientSubmissionId", "answers", "path", "submittedAt"],
@@ -199,5 +230,18 @@ db.responses.createIndex(
   { dedupeKey: 1 },
   { name: "dedupeKey_unique", unique: true, partialFilterExpression: { dedupeKey: { $type: "string" } } }
 );
+db.question_banks.createIndex({ ownerId: 1, name: 1 }, { name: "owner_name", unique: true });
+for (const oldName of ["bank_createdAt", "sharedWith"]) {
+  if (db.library_questions.getIndexes().some((index) => index.name === oldName)) {
+    db.library_questions.dropIndex(oldName);
+  }
+}
+db.library_questions.createIndex({ ownerId: 1, bankId: 1, createdAt: -1 },
+  { name: "owner_bank_createdAt" });
+db.library_questions.createIndex({ shareTokenHash: 1 }, { name: "shareTokenHash", unique: true,
+  partialFilterExpression: { shareTokenHash: { $type: "string" } } });
+db.question_versions.createIndex({ questionId: 1, version: 1 }, { name: "question_version_unique", unique: true });
+db.surveys.createIndex({ "draftQuestions.libraryQuestionId": 1 }, { name: "draft_library_question" });
+db.survey_versions.createIndex({ "questions.libraryQuestionId": 1 }, { name: "published_library_question" });
 
 print(`Initialized ${db.getName()}: ${Object.keys(collections).join(", ")}`);
